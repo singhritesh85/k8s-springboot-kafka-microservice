@@ -1,0 +1,43 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: order-service
+  namespace: ordersystem
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: order-service
+  template:
+    metadata:
+      labels:
+        app: order-service
+    spec:
+      containers:
+        - name: order-service
+          image: singhritesh85/order-service:1.0.3  # Ersetze dies durch das Docker-Image deines Order Services
+          ports:
+            - containerPort: 8080
+          env:
+            - name: KAFKA_SERVICE_URL
+              value: kafka-with-kraft.kafka.svc.cluster.local:9092
+            - name: SPRING_DATASOURCE_URL
+              value: jdbc:postgresql://postgresql-primary.postgresql.svc.cluster.local:5432/dexter
+            - name: SPRING_DATASOURCE_USERNAME
+              value: postgres
+            - name: SPRING_DATASOURCE_PASSWORD
+              value: Dexter123
+            - name: SPRING_JPA_HIBERNATE_DDL_AUTO
+              value: update
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: order-service
+  namespace: ordersystem
+spec:
+  ports:
+    - port: 8080
+      targetPort: 8080
+  selector:
+    app: order-service
