@@ -1,0 +1,83 @@
+trigger:
+- main
+
+resources:
+- repo: self
+
+pool:
+  name: demo
+  demands:
+  - agent.name -equals demo
+
+stages:
+- stage: Build
+  displayName: Build
+  jobs:
+  - job: Build
+    displayName: Build
+    workspace:
+      clean: all
+    steps:
+    - task: AzureKeyVault@2
+      inputs:
+        azureSubscription: 'Azure DevOps Service Connection'
+        KeyVaultName: 'multicloud'
+        SecretsFilter: '*'
+        RunAsPreJob: false
+    - task: Maven@4
+      inputs:
+        azureSubscription: 'Azure DevOps Service Connection'
+        mavenPomFile: 'pom.xml'
+        goals: 'clean install'
+        publishJUnitResults: false
+        javaHomeOption: 'JDKVersion'
+        mavenVersionOption: 'Default'
+        mavenAuthenticateFeed: false
+        effectivePomSkip: false
+        sonarQubeRunAnalysis: false
+      env:
+        DB_PASSWORD: $(multicloud-postgresql-server-password)
+- stage: DockerImageBuild
+  displayName: DockerImageBuild
+  dependsOn: Build
+  jobs:
+  - job: DockerImageBuild
+    displayName: DockerImageBuild
+    steps:
+    - checkout: none
+    - task: CmdLine@2
+      inputs:
+        script: |
+          if [[ -z `/bin/bash -c "kubectl get secret -n ordersystem --context=gke_wise-trainer-244916_us-central1_multicloud-gke-cluster|grep springboot-app-secret|cut -d ' ' -f1"` ]]
+          then
+            kubectl create secret docker-registry springboot-app-secret --docker-server=docker.io --docker-username=$(DOCKERHUB_USERNAME) --docker-password=$(DOCKERHUB_PASSWORD) --namespace=ordersystem --context=gke_wise-trainer-244916_us-central1_multicloud-gke-cluster
+          fi 
+          docker system prune -f --all
+          docker build -t singhritesh85/order-service:$(Build.BuildId) -f order-service/Dockerfile .
+          trivy image --exit-code 0 --severity MEDIUM,HIGH singhritesh85/order-service:$(Build.BuildId)
+         #trivy image --exit-code 1 --severity CRITICAL singhritesh85/order-service:$(Build.BuildId)
+    - task: Docker@2
+      inputs:
+        containerRegistry: 'Docker-Registry'
+        repository: 'singhritesh85/order-service'
+        command: 'buildAndPush'
+        Dockerfile: '**/order-service/Dockerfile'
+- stage: KubernetesDeployment
+  displayName: KubernetesDeployment
+  dependsOn: DockerImageBuild
+  jobs:
+  - deployment: KubernetesDeployment
+    environment: "dev"
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - checkout: none
+          - task: CmdLine@2
+            inputs:
+              script: |
+                yes|argocd login argocd.singhritesh85.com --username admin --password $(ARGOCD_PASSWORD) --grpc-web --kube-context=gke_wise-trainer-244916_us-central1_multicloud-gke-cluster
+                argocd repo add https://github.com/singhritesh85/helm-repo-for-Order-System.git --username $(GITHUB_USERNAME) --password $(GITHUB_PASSWORD) --kube-context=gke_wise-trainer-244916_us-central1_multicloud-gke-cluster
+                argocd app create order-service --project default --repo https://github.com/singhritesh85/helm-repo-for-bitnami-kafka.git --path ./ --sync-option CreateNamespace=true --dest-namespace ordersystem --dest-server https://kubernetes.default.svc --helm-set replicaCount=1 --helm-set service.type=ClusterIP --helm-set keyvault.secretProviderClass=azure-keyvault --helm-set image.repository=singhritesh85/order-service --helm-set image.tag=$(Build.BuildId) --helm-set image.pullPolicy=Always --helm-set imagePullSecrets[0].name=springboot-app-secret --helm-set env.kafka_service_url="kafka-with-kraft.kafka.svc.cluster.local:9092" --helm-set env.spring_datasource_url="jdbc:postgresql://postgresql-primary.postgresql.svc.cluster.local:5432/mederma?sslmode=disable" --helm-set env.spring_datasource_username=dexter --helm-set existingSecret.name=db-credentials --helm-set existingSecret.key=password --helm-set env.spring_jpa_hibernate_ddl_auto=update --kube-context=gke_wise-trainer-244916_us-central1_multicloud-gke-cluster --upsert
+                argocd app sync order-service --kube-context=gke_wise-trainer-244916_us-central1_multicloud-gke-cluster
+                kubectl get pods -n ordersystem --context=gke_wise-trainer-244916_us-central1_multicloud-gke-cluster
