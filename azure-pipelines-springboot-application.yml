@@ -53,7 +53,7 @@ stages:
             kubectl create secret docker-registry springboot-app-secret --docker-server=docker.io --docker-username=$(DOCKERHUB_USERNAME) --docker-password=$(DOCKERHUB_PASSWORD) --namespace=ordersystem --context=gke_wise-trainer-244916_us-central1_multicloud-gke-cluster
           fi 
           docker system prune -f --all
-          docker build -t singhritesh85/order-service:$(Build.BuildId) -f order-service/Dockerfile .
+          cd order-service && docker build -t singhritesh85/order-service:$(Build.BuildId) -f Dockerfile .
           trivy image --exit-code 0 --severity MEDIUM,HIGH singhritesh85/order-service:$(Build.BuildId)
          #trivy image --exit-code 1 --severity CRITICAL singhritesh85/order-service:$(Build.BuildId)
     - task: Docker@2
