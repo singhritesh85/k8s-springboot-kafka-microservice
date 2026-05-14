@@ -27,7 +27,7 @@ stages:
     - task: Maven@4
       inputs:
         azureSubscription: 'Azure DevOps Service Connection'
-        mavenPomFile: 'pom.xml'
+        mavenPomFile: 'order-service/pom.xml'
         goals: 'clean install'
         publishJUnitResults: false
         javaHomeOption: 'JDKVersion'
